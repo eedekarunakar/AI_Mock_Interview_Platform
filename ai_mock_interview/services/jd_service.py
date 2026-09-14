@@ -1,8 +1,8 @@
 import json
 import re
 
-from services.llm_service import call_llm
-from prompt import (
+from .llm_service import call_llm
+from ..prompt import (
     IS_RESUME_PROMPT,
     EXTRACT_CANDIDATE_NAME_PROMPT,
     EXTRACT_RESUME_ENTITIES_PROMPT,

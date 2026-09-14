@@ -1,5 +1,5 @@
-from services.llm_service import call_llm
-from prompt import (
+from .llm_service import call_llm
+from ..prompt import (
     GENERATE_FIRST_QUESTION_PROMPT,
     GENERATE_FIRST_QUESTION_JSON_PROMPT,
     GENERATE_NEXT_QUESTION_JSON_PROMPT,
@@ -34,16 +34,37 @@ def generate_first_question(name, jd, resume):
 def _extract_json_object(content: str) -> dict:
     if not content:
         return {}
-    import re
     import json
+    import re
 
-    match = re.search(r"\{.*\}", content, re.DOTALL)
-    if not match:
+    text = str(content).strip()
+    if not text:
         return {}
-    try:
-        return json.loads(match.group())
-    except Exception:
-        return {}
+
+    # Remove markdown fences that often surround responses from LLMs
+    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text, flags=re.IGNORECASE)
+
+    # Try the raw content first in case the LLM already returned clean JSON
+    for candidate in [text]:
+        try:
+            data = json.loads(candidate)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+
+    # Try to find the first complete JSON object while ignoring extra prose
+    matches = re.findall(r"\{.*?\}", text, flags=re.DOTALL)
+    for match in sorted(matches, key=len, reverse=True):
+        try:
+            data = json.loads(match)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            continue
+
+    return {}
 
 
 def generate_first_question_json(name: str, technology: str, difficulty: str = "EASY") -> dict:
@@ -52,16 +73,15 @@ def generate_first_question_json(name: str, technology: str, difficulty: str = "
     """
     safe_name = name.strip() if isinstance(name, str) and name.strip() else "Candidate"
     import random
-    
-    # Add random context to encourage variety
+
     random_context = random.choice([
         "Start with a technical concept",
-        "Begin with a practical scenario", 
+        "Begin with a practical scenario",
         "Ask about fundamental principles",
         "Focus on real-world application",
         "Include a problem-solving element"
     ])
-    
+
     prompt = GENERATE_FIRST_QUESTION_JSON_PROMPT.format(
         safe_name=safe_name,
         technology=technology,
@@ -69,12 +89,15 @@ def generate_first_question_json(name: str, technology: str, difficulty: str = "
         random_context=random_context
     )
     content = call_llm(prompt)
-    
-    # Check for rate limit error
+
+    if content is None:
+        print("DEBUG: LLM returned no response for first question, using fallback")
+        return _get_fallback_first_question(name, technology, difficulty)
+
     if content == "RATE_LIMIT_ERROR":
         print("DEBUG: Rate limit hit for first question, using fallback")
         return _get_fallback_first_question(name, technology, difficulty)
-    
+
     data = _extract_json_object(content)
     if data.get("question"):
         return {
@@ -82,10 +105,9 @@ def generate_first_question_json(name: str, technology: str, difficulty: str = "
             "technology": data.get("technology", technology),
             "difficulty": data.get("difficulty", difficulty),
         }
-    
-    # If LLM fails, return empty dict - no fallback questions
-    print("DEBUG: LLM failed to generate first question, no fallback available")
-    return {}
+
+    print("DEBUG: LLM failed to generate valid first question JSON, using fallback")
+    return _get_fallback_first_question(name, technology, difficulty)
 
 
 def generate_next_question_json(
@@ -102,19 +124,17 @@ def generate_next_question_json(
     safe_name = name.strip() if isinstance(name, str) and name.strip() else "Candidate"
     asked_questions_text = "\n".join(asked_questions[-10:]) if asked_questions else ""
     import random
-    
-    # Add random elements to encourage variety
+
     random_approach = random.choice([
         "Build on previous answer",
-        "Explore different aspect", 
+        "Explore different aspect",
         "Challenge with new scenario",
         "Focus on practical implementation",
         "Include system design element"
     ])
-    
-    # Get available technologies from session (simulate this for now)
+
     available_technologies = ["Java", "Object-Oriented Programming", "Data Structures", "Algorithms", "Software Development"]
-    
+
     prompt = GENERATE_NEXT_QUESTION_JSON_PROMPT.format(
         previous_question=previous_question,
         previous_answer=previous_answer,
@@ -126,32 +146,32 @@ def generate_next_question_json(
         random_approach=random_approach
     )
     content = call_llm(prompt)
-    
-    # Check for rate limit error
+
+    if content is None:
+        print("DEBUG: LLM returned no response for next question, using fallback")
+        return _get_fallback_next_question(technology, difficulty, previous_question, previous_answer)
+
     if content == "RATE_LIMIT_ERROR":
         print("DEBUG: Rate limit hit for next question, using fallback")
         return _get_fallback_next_question(technology, difficulty, previous_question, previous_answer)
-    
+
     data = _extract_json_object(content)
-    
-    # Check if LLM decided to end the interview
+
     if data.get("end_interview"):
         return {
             "end_interview": True,
             "reason": data.get("reason", "Interview ended due to consecutive low scores")
         }
-    
-    # Return normal question if interview continues
+
     if data.get("question"):
         return {
             "question": data.get("question"),
             "technology": data.get("technology", technology),
             "difficulty": data.get("difficulty", difficulty),
         }
-    
-    # If LLM fails, return empty dict - no fallback questions
-    print("DEBUG: LLM failed to generate next question, no fallback available")
-    return {}
+
+    print("DEBUG: LLM failed to generate valid next question JSON, using fallback")
+    return _get_fallback_next_question(technology, difficulty, previous_question, previous_answer)
 
 
 # -----------------------------------

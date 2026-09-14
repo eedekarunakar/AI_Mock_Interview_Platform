@@ -1,7 +1,27 @@
 import requests
 import base64
-from config import Config
-from prompt import FACE_DETECTION_FALLBACK_PROMPT
+from ..config import Config
+from ..prompt import FACE_DETECTION_FALLBACK_PROMPT
+
+
+def get_groq_model_candidates():
+    """Return a prioritized list of Groq models, preferring a valid supported model."""
+    configured = (Config.GROQ_MODEL or "").strip()
+    candidates = []
+    if configured:
+        candidates.append(configured)
+
+    fallback_models = [
+        "llama-3.1-70b-versatile",
+        "llama-3.1-8b-instant",
+        "llama-3.3-70b-versatile",
+        "gemma2-9b-it",
+    ]
+    for model in fallback_models:
+        if model not in candidates:
+            candidates.append(model)
+    return candidates
+
 
 def call_grok(prompt):
     """
@@ -86,7 +106,7 @@ def call_llm(prompt):
 
 def call_groq_llm(prompt):
     """
-    Original Groq LLM function (renamed)
+    Original Groq LLM function (renamed) with a safe retry loop for model fallbacks.
     """
     url = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -95,53 +115,57 @@ def call_groq_llm(prompt):
         "Content-Type": "application/json"
     }
 
-    # Add randomness to prompt and increase temperature for variety
     import random
     random_seed = random.randint(1, 999999)
-    
-    body = {
-       "model": "llama-3.3-70b-versatile",
-        # "model": "groq/compound-mini",
-        
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.9,  # Increased for more randomness
-        "seed": random_seed,  # Add random seed for variety
-        "top_p": 0.95  # Allow more diverse responses
-    }
 
-    try:
-        response = requests.post(url, headers=headers, json=body, timeout=60)
-    except Exception as e:
-        print("LLM request error:", e)
-        return None
+    for model in get_groq_model_candidates():
+        body = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.9,
+            "seed": random_seed,
+            "top_p": 0.95,
+        }
 
-    # If Groq returns an error payload, it may not have `choices`.
-    try:
-        data = response.json()
-    except Exception:
-        print("LLM non-JSON response:", response.text[:500])
-        return None
+        try:
+            response = requests.post(url, headers=headers, json=body, timeout=60)
+        except Exception as e:
+            print("LLM request error:", e)
+            continue
 
-    if not response.ok:
-        # Best-effort extraction of error message
-        err = data.get("error") or {}
-        print("LLM HTTP error:", response.status_code, err.get("message") or data)
-        
-        # Check for rate limit specifically
-        if response.status_code == 429:
-            print("RATE LIMIT REACHED - Switching to Grok fallback")
-            print("Visit: https://console.groq.com/settings/billing to upgrade")
-            # Return a helpful message when rate limited
-            return "RATE_LIMIT_ERROR"
-        return None
+        try:
+            data = response.json()
+        except Exception:
+            print("LLM non-JSON response:", response.text[:500])
+            continue
 
-    choices = data.get("choices")
-    if not choices:
-        print("LLM response missing choices:", data)
-        return None
+        if not response.ok:
+            err = data.get("error") or {}
+            message = err.get("message") or data
+            print("LLM HTTP error for model", model, response.status_code, message)
 
-    msg = choices[0].get("message") or {}
-    return msg.get("content")
+            if response.status_code == 429:
+                print("RATE LIMIT REACHED - Switching to Grok fallback")
+                print("Visit: https://console.groq.com/settings/billing to upgrade")
+                return "RATE_LIMIT_ERROR"
+
+            if response.status_code in (400, 404):
+                print(f"DEBUG: Model {model} unavailable, trying next fallback model")
+                continue
+
+            return None
+
+        choices = data.get("choices")
+        if not choices:
+            print("LLM response missing choices:", data)
+            continue
+
+        msg = choices[0].get("message") or {}
+        content = msg.get("content")
+        if content:
+            return content
+
+    return None
 
 def call_llm_with_image(prompt, image_base64):
     """

@@ -6,22 +6,21 @@ Flask-CORS==4.0.0
 requests==2.31.0
 
 # Speech Recognition
-SpeechRecognition==3.10.0
- pyaudio==0.2.14
+SpeechRecognition>=3.14.0
+# PyAudio is only needed for microphone capture and has no Python 3.14 wheel.
 
 # Audio Processing
- numpy==1.26.2
- scipy==1.12.0
-sounddevice==0.5.0
+numpy>=2.2.0
+scipy>=1.12.0
 
 # Computer Vision (for face detection)
-opencv-python==4.9.0.80
+opencv-python==5.0.0.93
 Pillow==10.2.0
-ultralytics==8.1.34
-mediapipe==0.10.33
+# MediaPipe and Ultralytics are optional; camera_monitor.py uses an OpenCV fallback.
 
 # File Processing
 python-docx==1.1.0
+pdfplumber==0.11.4
 PyPDF2==3.0.1
 
 # Text Processing
@@ -35,11 +34,3 @@ pytest==7.4.3
 black==23.12.1
 flake8==7.0.0
 
-# Optional: For advanced audio processing
-librosa==0.10.1
-
-# Optional: For better resume parsing
-spacy==3.7.2
-
-# Optional: For enhanced text processing
-textblob==0.17.1

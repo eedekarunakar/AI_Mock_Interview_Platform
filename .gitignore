@@ -120,3 +120,6 @@ screenshots/
 # Test files
 test_*
 *_test.py
+
+.venv312/
+

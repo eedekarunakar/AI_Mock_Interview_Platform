@@ -1,16 +1,17 @@
 from flask import Blueprint, request, jsonify, render_template
-from utils.file_utils import save_file
-from services.resume_service import extract_text
-from services.jd_service import extract_candidate_name, extract_resume_entities, is_resume, match_score
-from services.interview_service import generate_first_question_json, generate_next_question_json
-from services.evaluation_service import evaluate_answer, generate_feedback, generate_answer_feedback
-from services.speech_service import speech_to_text
+from ..utils.file_utils import save_file
+from ..services.resume_service import extract_text
+from ..services.jd_service import extract_candidate_name, extract_resume_entities, is_resume, match_score
+from ..services.interview_service import generate_first_question_json, generate_next_question_json
+from ..services.evaluation_service import evaluate_answer, generate_feedback, generate_answer_feedback
+from ..services.speech_service import speech_to_text
 import os
-from utils.camera_monitor import detect_faces
+import shutil
+from ..utils.camera_monitor import detect_faces
 import subprocess
 from datetime import datetime
 import re
-from prompt import TECHNOLOGY_EXTRACTION_PROMPT
+from ..prompt import TECHNOLOGY_EXTRACTION_PROMPT
 
 interview_bp = Blueprint("interview", __name__)
 
@@ -487,33 +488,40 @@ def next_q():
     output_path = os.path.join("uploads", "temp.wav")
     audio_file.save(input_path)
 
-    # MediaRecorder output is not always true WAV. Convert to WAV for SpeechRecognition.
+    # MediaRecorder output is not always true WAV. Convert to WAV for SpeechRecognition
+    # when ffmpeg is available; otherwise keep the original file if it is already WAV.
+    ffmpeg_path = shutil.which("ffmpeg")
     try:
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                input_path,
-                "-ar",
-                "16000",
-                "-ac",
-                "1",
-                output_path,
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        if ffmpeg_path and input_path.lower().endswith((".webm", ".ogg", ".mp4", ".m4a", ".aac", ".mp3")):
+            subprocess.run(
+                [
+                    ffmpeg_path,
+                    "-y",
+                    "-i",
+                    input_path,
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    output_path,
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            output_path = input_path
     except Exception:
-        # If conversion fails, fall back to original path.
         output_path = input_path
 
     answer = speech_to_text(output_path)
 
     if not answer or answer == "SPEECH_NOT_DETECTED":
+        file_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+        if file_size < 1000:
+            return jsonify({"error": "Audio recording was too short or empty. Please speak clearly and try again."})
         return jsonify({"error": "Unable to detect speech. Please speak clearly and try again."})
-    
+
     if answer.startswith("AUDIO_ERROR:"):
         return jsonify({"error": f"Audio processing error: {answer.replace('AUDIO_ERROR: ', '')}"})
 
@@ -936,7 +944,7 @@ def generate_enhanced_feedback(percentage, answers):
     """Generate comprehensive feedback with strengths, weaknesses, and technology recommendations using LLM"""
     
     # Generate dynamic feedback using LLM
-    from services.llm_service import call_llm
+    from ..services.llm_service import call_llm
     
     # Prepare answers summary for context
     answers_summary = ""

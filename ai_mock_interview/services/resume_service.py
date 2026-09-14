@@ -1,6 +1,6 @@
 import pdfplumber
 import docx
-from prompt import MATCH_RESUME_WITH_JD_PROMPT
+from ..prompt import MATCH_RESUME_WITH_JD_PROMPT
 
 def extract_text(file_path):
     if file_path.endswith(".pdf"):

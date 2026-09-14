@@ -754,10 +754,17 @@ async function startListening() {
         microphone.connect(analyser);
         analyser.fftSize = 256;
         
-        // Initialize media recorder
-        mediaRecorder = new MediaRecorder(stream);
+        // Prefer WAV when supported so the browser can record a format the backend can transcribe without extra conversion.
+        const preferredMimeTypes = [
+            'audio/wav',
+            'audio/webm;codecs=opus',
+            'audio/webm',
+            'audio/mp4'
+        ];
+        const mimeType = preferredMimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || '';
+        mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
         audioChunks = [];
-        
+
         mediaRecorder.ondataavailable = (event) => {
             audioChunks.push(event.data);
         };
@@ -971,41 +978,109 @@ function startTimer() {
 
 function startSilenceDetection() {
     let silenceCount = 0;
-    const silenceThreshold = 0.01; // Adjust based on testing
-    const checkInterval = 100; // Check every 100ms
-    const maxSilenceTime = 5000; // 5 seconds of silence
-    
+    const silenceThreshold = 0.06; // Slightly more forgiving for normal speaking voice
+    const checkInterval = 100;
+    const maxSilenceTime = 45000; // Allow up to 45s before auto-stop as a safety fallback
+
     const checkSilence = () => {
         if (!isRecording) return;
-        
+
+        if (!analyser) {
+            if (isRecording) {
+                silenceTimer = setTimeout(checkSilence, checkInterval);
+            }
+            return;
+        }
+
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         analyser.getByteFrequencyData(dataArray);
-        
-        // Calculate average volume
+
         const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length;
         const normalized = average / 255;
-        
+
         if (normalized < silenceThreshold) {
             silenceCount += checkInterval;
             if (silenceCount >= maxSilenceTime) {
-                console.log("Silence detected, stopping recording");
+                console.log("Long silence detected; stopping as a safety fallback");
                 stopRecording();
                 return;
             }
         } else {
-            silenceCount = 0; // Reset silence counter when speech is detected
+            silenceCount = 0;
         }
-        
+
         if (isRecording) {
             silenceTimer = setTimeout(checkSilence, checkInterval);
         }
     };
-    
+
     silenceTimer = setTimeout(checkSilence, checkInterval);
 }
 
+async function audioBlobToWavBlob(audioBlob) {
+    if (!audioBlob || audioBlob.size === 0) {
+        return audioBlob;
+    }
+
+    try {
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        try {
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+            const numberOfChannels = audioBuffer.numberOfChannels;
+            const sampleRate = audioBuffer.sampleRate;
+            const format = 1; // PCM
+            const bitDepth = 16;
+            const bytesPerSample = bitDepth / 8;
+            const blockAlign = numberOfChannels * bytesPerSample;
+            const dataLength = audioBuffer.length * blockAlign;
+            const wavBuffer = new ArrayBuffer(44 + dataLength);
+            const view = new DataView(wavBuffer);
+
+            const writeString = (offset, text) => {
+                for (let i = 0; i < text.length; i++) {
+                    view.setUint8(offset + i, text.charCodeAt(i));
+                }
+            };
+
+            writeString(0, 'RIFF');
+            view.setUint32(4, 36 + dataLength, true);
+            writeString(8, 'WAVE');
+            writeString(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, format, true);
+            view.setUint16(22, numberOfChannels, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * blockAlign, true);
+            view.setUint16(32, blockAlign, true);
+            view.setUint16(34, bitDepth, true);
+            writeString(36, 'data');
+            view.setUint32(40, dataLength, true);
+
+            let offset = 44;
+            for (let channel = 0; channel < numberOfChannels; channel++) {
+                const channelData = audioBuffer.getChannelData(channel);
+                for (let i = 0; i < channelData.length; i++) {
+                    const sample = Math.max(-1, Math.min(1, channelData[i]));
+                    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+                    offset += 2;
+                }
+            }
+
+            return new Blob([wavBuffer], { type: 'audio/wav' });
+        } finally {
+            await audioContext.close();
+        }
+    } catch (error) {
+        console.warn('Could not convert audio to WAV, falling back to original blob:', error);
+        return audioBlob;
+    }
+}
+
 async function processRecording() {
-    const blob = new Blob(audioChunks, { type: "audio/wav" });
+    const rawBlob = new Blob(audioChunks, { type: (mediaRecorder && mediaRecorder.mimeType) || 'audio/webm' });
+    const blob = await audioBlobToWavBlob(rawBlob);
 
     const formData = new FormData();
     formData.append("audio", blob, "audio.wav");

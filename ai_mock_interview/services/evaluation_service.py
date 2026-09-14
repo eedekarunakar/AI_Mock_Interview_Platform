@@ -1,8 +1,8 @@
 import requests
 import re
 import json
-from config import Config
-from prompt import (
+from ..config import Config
+from ..prompt import (
     ANSWER_FEEDBACK_PROMPT,
     EVALUATE_ANSWER_PROMPT,
     FALLBACK_EVALUATION_PROMPT,
