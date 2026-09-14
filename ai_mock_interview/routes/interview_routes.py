@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, render_template
 from ..utils.file_utils import save_file
-from ..services.resume_service import extract_text
-from ..services.jd_service import extract_candidate_name, extract_resume_entities, is_resume, match_score
+from ..services.resume_service import extract_text, extract_resume_data
+from ..services.jd_service import extract_candidate_name, extract_resume_entities, is_resume, match_score, _fallback_score
 from ..services.interview_service import generate_first_question_json, generate_next_question_json
 from ..services.evaluation_service import evaluate_answer, generate_feedback, generate_answer_feedback
 from ..services.speech_service import speech_to_text
@@ -267,8 +267,18 @@ def start():
             "message": "❌ Could not read the resume file! Please ensure it's a valid PDF or DOCX file with readable text."
         })
 
-    print(f"DEBUG: About to call is_resume LLM validation...")
-    is_resume_result = is_resume(resume_text)
+    # Vercel functions have a short execution window. Keep startup bounded by
+    # using local extraction and keyword matching there instead of several LLM calls.
+    vercel_runtime = os.getenv("VERCEL") == "1"
+    print(f"DEBUG: Vercel runtime: {vercel_runtime}")
+
+    print(f"DEBUG: About to validate resume...")
+    local_resume_data = extract_resume_data(path) if vercel_runtime else None
+    is_resume_result = (
+        bool(local_resume_data and local_resume_data.get("entities", {}).get("skills"))
+        if vercel_runtime
+        else is_resume(resume_text)
+    )
     print(f"DEBUG: LLM is_resume result: {is_resume_result}")
 
     if not is_resume_result:
@@ -287,12 +297,16 @@ def start():
         })
 
     # Extract resume entities once; use them both for match scoring and interview adaptation.
-    entities = extract_resume_entities(resume_text)
+    entities = (
+        local_resume_data["entities"]
+        if vercel_runtime and local_resume_data
+        else extract_resume_entities(resume_text)
+    )
     print(f"DEBUG: Extracted entities - Skills: {len(entities.get('skills', []))}, Projects: {len(entities.get('projects', []))}, Certs: {len(entities.get('certifications', []))}")
     print(f"DEBUG: Skills: {entities.get('skills', [])[:5]}")  # Show first 5 skills
     print(f"DEBUG: JD length: {len(jd)} chars, Resume length: {len(resume_text)} chars")
 
-    match = match_score(jd, resume_text, entities=entities)
+    match = _fallback_score(jd, resume_text, entities) if vercel_runtime else match_score(jd, resume_text, entities=entities)
     print(f"DEBUG: Final match score: {match}%")
 
     if match < 25:
@@ -302,7 +316,7 @@ def start():
             "match_score": match
         })
 
-    extracted_name = extract_candidate_name(resume_text) or ""
+    extracted_name = "" if vercel_runtime else (extract_candidate_name(resume_text) or "")
     print(f"DEBUG: Extracted name from resume: '{extracted_name}'")
     
     # Prioritize resume name over input name
@@ -324,7 +338,7 @@ def start():
         candidate_technologies.extend([t.strip() for t in (entities.get("certifications") or []) if isinstance(t, str) and t.strip()])
 
     # If still no technologies found, extract from resume text using LLM for better technical identification
-    if not candidate_technologies:
+    if not candidate_technologies and not vercel_runtime:
         try:
             from services.llm_service import call_llm
             resume_snippet = resume_text[:2000]  # Use first 2000 chars for analysis
@@ -356,7 +370,7 @@ def start():
 
     # Validate the LLM contract: technology/difficulty must match backend selections.
     first_q_data = None
-    for _ in range(3):
+    for _ in range(1 if vercel_runtime else 3):
         candidate = generate_first_question_json(final_name, initial_technology, initial_difficulty)
         if (
             candidate

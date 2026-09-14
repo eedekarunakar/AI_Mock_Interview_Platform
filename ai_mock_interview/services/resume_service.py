@@ -1,3 +1,5 @@
+import re
+
 import pdfplumber
 import docx
 from ..prompt import MATCH_RESUME_WITH_JD_PROMPT

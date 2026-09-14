@@ -1,5 +1,6 @@
 import requests
 import base64
+import os
 from ..config import Config
 from ..prompt import FACE_DETECTION_FALLBACK_PROMPT
 
@@ -128,7 +129,8 @@ def call_groq_llm(prompt):
         }
 
         try:
-            response = requests.post(url, headers=headers, json=body, timeout=60)
+            timeout = 7 if os.getenv("VERCEL") else 60
+            response = requests.post(url, headers=headers, json=body, timeout=timeout)
         except Exception as e:
             print("LLM request error:", e)
             continue
