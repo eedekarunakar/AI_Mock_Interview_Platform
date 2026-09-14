@@ -687,13 +687,34 @@ async function startInterview() {
         </div>
     `;
 
-    const res = await fetch("/start", {
-        method: "POST",
-        body: formData
-    });
-
-    const data = await res.json();
-    console.log("START RESPONSE:", data);
+    let data;
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000);
+        const res = await fetch("/start", {
+            method: "POST",
+            body: formData,
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+        data = await res.json();
+        console.log("START RESPONSE:", data);
+        if (!res.ok) {
+            throw new Error(data.error || data.message || `Server error (${res.status})`);
+        }
+    } catch (error) {
+        console.error("START REQUEST FAILED:", error);
+        document.getElementById("setup").style.display = "block";
+        document.getElementById("interview").style.display = "none";
+        showToast(
+            error.name === "AbortError"
+                ? "Interview startup timed out. Please try again."
+                : `Could not start interview: ${error.message}`,
+            "error",
+            6000
+        );
+        return;
+    }
 
     if (data.status === "error" || data.status === "rejected") {
         alert(data.message || "Resume validation failed.");

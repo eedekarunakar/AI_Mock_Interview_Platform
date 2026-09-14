@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify, render_template
 from ..utils.file_utils import save_file
 from ..services.resume_service import extract_text, extract_resume_data
 from ..services.jd_service import extract_candidate_name, extract_resume_entities, is_resume, match_score, _fallback_score
-from ..services.interview_service import generate_first_question_json, generate_next_question_json
+from ..services.interview_service import generate_first_question_json, generate_next_question_json, _get_fallback_first_question
 from ..services.evaluation_service import evaluate_answer, generate_feedback, generate_answer_feedback
 from ..services.speech_service import speech_to_text
 import os
@@ -371,7 +371,11 @@ def start():
     # Validate the LLM contract: technology/difficulty must match backend selections.
     first_q_data = None
     for _ in range(1 if vercel_runtime else 3):
-        candidate = generate_first_question_json(final_name, initial_technology, initial_difficulty)
+        candidate = (
+            _get_fallback_first_question(final_name, initial_technology, initial_difficulty)
+            if vercel_runtime
+            else generate_first_question_json(final_name, initial_technology, initial_difficulty)
+        )
         if (
             candidate
             and candidate.get("question")
