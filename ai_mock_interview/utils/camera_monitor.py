@@ -1,8 +1,11 @@
-import cv2
 import base64
-import numpy as np
-import io
-from PIL import Image
+
+try:
+    import cv2
+    import numpy as np
+except ImportError:
+    cv2 = None
+    np = None
 
 # MediaPipe setup with fallback
 try:
@@ -56,6 +59,10 @@ def detect_faces(base64_image):
     More accurate and robust than basic detection with validation.
     """
     try:
+        if cv2 is None or np is None:
+            print("DEBUG: OpenCV unavailable; using single-face fallback")
+            return 1
+
         print(f"DEBUG: Using advanced MediaPipe for multi-face detection")
         
         # Decode base64 image

@@ -10,14 +10,8 @@ requests==2.31.0
 SpeechRecognition>=3.14.0
 # PyAudio is only needed for microphone capture and has no Python 3.14 wheel.
 
-# Audio Processing
-numpy>=2.2.0
-scipy>=1.12.0
-
-# Computer Vision (for face detection)
-opencv-python==5.0.0.93
-Pillow==10.2.0
-# MediaPipe and Ultralytics are optional; camera_monitor.py uses an OpenCV fallback.
+# Computer vision is optional for Vercel's serverless runtime. Browser-side
+# monitoring remains available and the server uses a graceful fallback.
 
 # File Processing
 python-docx==1.1.0
