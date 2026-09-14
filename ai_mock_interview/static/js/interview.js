@@ -697,7 +697,12 @@ async function startInterview() {
             signal: controller.signal
         });
         clearTimeout(timeout);
-        data = await res.json();
+        const responseText = await res.text();
+        try {
+            data = JSON.parse(responseText);
+        } catch (parseError) {
+            throw new Error(`Server returned an invalid response (${res.status})`);
+        }
         console.log("START RESPONSE:", data);
         if (!res.ok) {
             throw new Error(data.error || data.message || `Server error (${res.status})`);

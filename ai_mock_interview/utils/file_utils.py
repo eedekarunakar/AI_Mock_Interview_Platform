@@ -1,7 +1,12 @@
 import os
+import tempfile
 from werkzeug.utils import secure_filename
 
-UPLOAD_FOLDER = "uploads"
+UPLOAD_FOLDER = (
+    os.path.join(tempfile.gettempdir(), "ai_mock_interview_uploads")
+    if os.getenv("VERCEL") == "1"
+    else "uploads"
+)
 
 def save_file(file):
     if not os.path.exists(UPLOAD_FOLDER):
