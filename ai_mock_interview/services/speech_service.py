@@ -17,3 +17,6 @@ def speech_to_text(file_path):
 
     except sr.RequestError as e:
         return f"AUDIO_ERROR: {str(e)}"
+
+    except Exception as e:
+        return f"AUDIO_ERROR: {str(e)}"

@@ -1,8 +1,8 @@
 from flask import Blueprint, request, jsonify, render_template
-from ..utils.file_utils import save_file
+from ..utils.file_utils import UPLOAD_FOLDER, save_file
 from ..services.resume_service import extract_text, extract_resume_data
 from ..services.jd_service import extract_candidate_name, extract_resume_entities, is_resume, match_score, _fallback_score
-from ..services.interview_service import generate_first_question_json, generate_next_question_json, _get_fallback_first_question
+from ..services.interview_service import generate_first_question_json, generate_next_question_json, _get_fallback_first_question, _get_fallback_next_question
 from ..services.evaluation_service import evaluate_answer, generate_feedback, generate_answer_feedback
 from ..services.speech_service import speech_to_text
 import os
@@ -499,11 +499,10 @@ def next_q():
     if not audio_file:
         return jsonify({"error": "No audio received"})
 
-    if not os.path.exists("uploads"):
-        os.makedirs("uploads")
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-    input_path = os.path.join("uploads", "temp_input")
-    output_path = os.path.join("uploads", "temp.wav")
+    input_path = os.path.join(UPLOAD_FOLDER, "temp_input")
+    output_path = os.path.join(UPLOAD_FOLDER, "temp.wav")
     audio_file.save(input_path)
 
     # MediaRecorder output is not always true WAV. Convert to WAV for SpeechRecognition
@@ -546,11 +545,22 @@ def next_q():
     last_question_obj = SESSION["questions"][-1]
     last_q = last_question_obj["question"]
 
-    score = evaluate_answer(last_q, answer)
+    vercel_runtime = os.getenv("VERCEL") == "1"
+    if vercel_runtime:
+        word_count = len(answer.split())
+        base_score = 4 if word_count >= 40 else 3 if word_count >= 15 else 2
+        score = {
+            "relevance": base_score,
+            "technical": base_score,
+            "understanding": base_score,
+            "communication": base_score,
+            "total_score": float(base_score),
+        }
+        answer_feedback = "Answer evaluated locally on Vercel. Add specific examples and technical details for a stronger response."
+    else:
+        score = evaluate_answer(last_q, answer)
+        answer_feedback = generate_answer_feedback(last_q, answer, score)
     score_val = score.get("total_score", 0)
-    
-    # Generate feedback for this specific answer
-    answer_feedback = generate_answer_feedback(last_q, answer, score)
 
     # Persist answer first; question selection depends on score_val and current state.
     SESSION["answers"].append({
@@ -670,14 +680,18 @@ def next_q():
     # Generate next question with strict JSON contract.
     asked_questions = SESSION.get("asked_questions", [])
     next_q_data = None
-    for attempt in range(5):  # Increased attempts for better question variety
-        next_q_data = generate_next_question_json(
+    for attempt in range(1 if vercel_runtime else 5):
+        next_q_data = (
+            _get_fallback_next_question(next_technology, next_difficulty, last_q, answer)
+            if vercel_runtime
+            else generate_next_question_json(
             name=SESSION.get("name", ""),
             previous_question=last_q,
             previous_answer=answer,
             technology=next_technology,
             difficulty=next_difficulty,
             asked_questions=asked_questions,
+            )
         )
         
         # Check if LLM decided to end the interview
